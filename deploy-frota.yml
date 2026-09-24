@@ -1,0 +1,64 @@
+# .github/workflows/deploy-frota.yml
+# Pipeline M2M sem nenhum segredo armazenado no GitHub.
+# O runner prova sua identidade com o JWT emitido pelo próprio GitHub,
+# troca por um token OPA de 15 minutos e acessa o servidor sob a MESMA
+# policy usada pela SRE humana.
+
+name: deploy-frota
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write   # permite ao job pedir o JWT OIDC ao GitHub
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      OPA_ADDR: https://demo-localiza-demo-set26.pam.okta.com
+      SFT_TEAM: 00o17yrkhzbmwsyrr698
+      OPA_CONNECTION: github-actions-github.com_alexandregomes3112_demo_okta.git
+      OPA_ROLE: deploy-frota
+      TARGET_SERVER: srv-frota-prod-aws
+
+    steps:
+      - name: Instalar cliente Okta Privileged Access
+        run: |
+          curl -fsSL https://dist.scaleft.com/GPG-KEY-OktaPAM-2023 \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/oktapam-2023-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oktapam-2023-archive-keyring.gpg] https://dist.scaleft.com/repos/deb $(lsb_release -cs) okta" \
+            | sudo tee /etc/apt/sources.list.d/oktapam-stable.list
+          sudo apt-get update
+          sudo apt-get install -y scaleft-client-tools
+          sft --version
+
+      - name: Obter identidade do workload (JWT do GitHub)
+        run: |
+          GH_JWT=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value')
+          echo "::add-mask::$GH_JWT"
+          echo "GH_JWT=$GH_JWT" >> "$GITHUB_ENV"
+
+      - name: Trocar JWT por token OPA de curta duração
+        run: |
+          OPA_TOKEN=$(sft wl authenticate \
+            --team "$SFT_TEAM" \
+            --connection "$OPA_CONNECTION" \
+            --jwt-env GH_JWT \
+            --role-hint "$OPA_ROLE")
+          echo "::add-mask::$OPA_TOKEN"
+          echo "OPA_TOKEN=$OPA_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Listar servidores autorizados para este workload
+        run: sft list-servers
+
+      - name: Executar tarefa no servidor de produção
+        run: |
+          sft ssh "$TARGET_SERVER" --command \
+            "echo 'Deploy executado por workload:' && whoami && hostname && date -u"
