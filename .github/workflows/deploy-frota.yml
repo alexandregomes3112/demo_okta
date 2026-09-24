@@ -44,6 +44,10 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value')
           echo "::add-mask::$GH_JWT"
           echo "GH_JWT=$GH_JWT" >> "$GITHUB_ENV"
+      
+            - name: Debug - claims do JWT
+        run: |
+          python3 -c "import os,json,base64;p=os.environ['GH_JWT'].split('.')[1];p+='='*(-len(p)%4);d=json.loads(base64.urlsafe_b64decode(p));print(json.dumps({k:d.get(k) for k in ['sub','repository','ref','repository_owner','aud']},indent=2))"
 
       - name: Trocar JWT por token OPA de curta duração
         run: |
